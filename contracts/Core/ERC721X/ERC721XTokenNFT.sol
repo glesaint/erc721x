@@ -24,6 +24,10 @@ contract ERC721XTokenNFT is ERC721, SupportsInterfaceWithLookup {
     mapping(uint256 => address) internal tokenOwner;
     mapping(address => mapping(address => bool)) operators;
     mapping (uint256 => address) internal tokenApprovals;
+    mapping(uint256 => uint256) tokenType;
+
+    uint256 constant NFT = 1;
+    uint256 constant FT = 2;
 
 
     constructor() public {
@@ -45,8 +49,7 @@ contract ERC721XTokenNFT is ERC721, SupportsInterfaceWithLookup {
      * @return whether the token exists
      */
     function exists(uint256 _tokenId) public view returns (bool) {
-        address owner = tokenOwner[_tokenId];
-        return owner != address(0);
+        return tokenType[_tokenId] != 0;
     }
 
     function implementsERC721() public pure returns (bool) {
@@ -78,7 +81,7 @@ contract ERC721XTokenNFT is ERC721, SupportsInterfaceWithLookup {
      * @return address the owner of the token
      */
     function ownerOf(uint256 _tokenId) public view returns (address) {
-        require(tokenOwner[_tokenId] != address(0), "Not an NFT");
+        require(tokenOwner[_tokenId] != address(0), "Coin does not exist");
         return tokenOwner[_tokenId];
     }
 
@@ -169,18 +172,12 @@ contract ERC721XTokenNFT is ERC721, SupportsInterfaceWithLookup {
     function _transferFrom(address _from, address _to, uint256 _tokenId)
         internal
     {
+        require(tokenType[_tokenId] == NFT);
         require(isApprovedOrOwner(_from, ownerOf(_tokenId), _tokenId));
         require(_to != address(0), "Invalid to address");
 
-        (uint256 bin, uint256 index) = _tokenId.getTokenBinIndex();
-        packedTokenBalance[_from][bin] =
-            packedTokenBalance[_from][bin].updateTokenBalance(
-                index, 0, ObjectLib.Operations.REPLACE
-        );
-        packedTokenBalance[_to][bin] =
-            packedTokenBalance[_to][bin].updateTokenBalance(
-                index, 1, ObjectLib.Operations.REPLACE
-        );
+        _updateTokenBalance(_from, _tokenId, 0, ObjectLib.Operations.REPLACE);
+        _updateTokenBalance(_to, _tokenId, 1, ObjectLib.Operations.REPLACE);
 
         tokenOwner[_tokenId] = _to;
         emit Transfer(_from, _to, _tokenId);
@@ -191,6 +188,7 @@ contract ERC721XTokenNFT is ERC721, SupportsInterfaceWithLookup {
         tokenUri = "https://rinkeby.loom.games/erc721/zmb/000000.json";
 
         bytes memory _uriBytes = bytes(tokenUri);
+        _uriBytes[38] = byte(48+(_tokenId / 100000) % 10);
         _uriBytes[39] = byte(48+(_tokenId / 10000) % 10);
         _uriBytes[40] = byte(48+(_tokenId / 1000) % 10);
         _uriBytes[41] = byte(48+(_tokenId / 100) % 10);
@@ -259,6 +257,7 @@ contract ERC721XTokenNFT is ERC721, SupportsInterfaceWithLookup {
         require(!exists(_tokenId), "Error: Tried to mint duplicate token id");
         _updateTokenBalance(_to, _tokenId, 1, ObjectLib.Operations.REPLACE);
         tokenOwner[_tokenId] = _to;
+        tokenType[_tokenId] = NFT;
         allTokens.push(_tokenId);
         emit Transfer(address(this), _to, _tokenId);
     }

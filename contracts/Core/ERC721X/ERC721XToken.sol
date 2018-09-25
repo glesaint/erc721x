@@ -19,7 +19,6 @@ contract ERC721XToken is ERC721X, ERC721XTokenNFT {
     bytes4 internal constant ERC721X_BATCH_RECEIVE_SIG = 0xe9e5be6a;
 
     event BatchTransfer(address from, address to, uint256[] tokenTypes, uint256[] amounts);
-    event TransferToken(address indexed from, address indexed to, uint256 indexed tokenId, uint256 quantity);
 
 
     modifier isOperatorOrOwner(address _from) {
@@ -48,6 +47,11 @@ contract ERC721XToken is ERC721X, ERC721XTokenNFT {
         require(_tokenIds.length == _amounts.length, "Inconsistent array length between args");
         require(_to != address(0), "Invalid recipient");
 
+        if (tokenType[_tokenIds[0]] == NFT) {
+            tokenOwner[_tokenIds[0]] = _to;
+            emit Transfer(_from, _to, _tokenIds[0]);
+        }
+
         // Load first bin and index where the object balance exists
         (uint256 bin, uint256 index) = ObjectLib.getTokenBinIndex(_tokenIds[0]);
 
@@ -67,6 +71,11 @@ contract ERC721XToken is ERC721X, ERC721XTokenNFT {
         uint256 lastBin = bin;
 
         for (uint256 i = 1; i < nTransfer; i++) {
+            // If we're transferring an NFT we additionally should update the tokenOwner and emit the corresponding event
+            if (tokenType[_tokenIds[i]] == NFT) {
+                tokenOwner[_tokenIds[i]] = _to;
+                emit Transfer(_from, _to, _tokenIds[i]);
+            }
             (bin, index) = _tokenIds[i].getTokenBinIndex();
 
             // If new bin
@@ -144,27 +153,13 @@ contract ERC721XToken is ERC721X, ERC721XTokenNFT {
         internal
         isOperatorOrOwner(_from)
     {
+        require(tokenType[_tokenId] == FT);
         require(_amount <= balanceOf(_from, _tokenId), "Quantity greater than from balance");
         require(_to != address(0), "Invalid to address");
 
         _updateTokenBalance(_from, _tokenId, _amount, ObjectLib.Operations.SUB);
         _updateTokenBalance(_to, _tokenId, _amount, ObjectLib.Operations.ADD);
-        emit TransferToken(_from, _to, _tokenId, _amount);
-    }
-
-    function _updateTokenBalance(
-        address _from,
-        uint256 _tokenId,
-        uint256 _amount,
-        ObjectLib.Operations op
-    )
-        internal
-    {
-        (uint256 bin, uint256 index) = _tokenId.getTokenBinIndex();
-        packedTokenBalance[_from][bin] =
-            packedTokenBalance[_from][bin].updateTokenBalance(
-                index, _amount, op
-        );
+        emit TransferWithQuantity(_from, _to, _tokenId, _amount);
     }
 
     function safeTransferFrom(address _from, address _to, uint256 _tokenId, uint256 _amount) public {
@@ -180,9 +175,17 @@ contract ERC721XToken is ERC721X, ERC721XTokenNFT {
     }
 
     function _mint(uint256 _tokenId, address _to, uint256 _supply) internal {
+        // If the token doesn't exist, add it to the tokens array
+        if (!exists(_tokenId)) {
+            tokenType[_tokenId] = FT;
+            allTokens.push(_tokenId);
+        } else {
+            // if the token exists, it must be a FT
+            require(tokenType[_tokenId] == FT, "Not a FT");
+        }
+
         _updateTokenBalance(_to, _tokenId, _supply, ObjectLib.Operations.REPLACE);
-        allTokens.push(_tokenId);
-        emit TransferToken(address(this), _to, _tokenId, _supply);
+        emit TransferWithQuantity(address(this), _to, _tokenId, _supply);
     }
 
 

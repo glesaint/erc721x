@@ -12,6 +12,12 @@ require('chai')
 
 const Card = artifacts.require('Card')
 
+Number.prototype.pad = function(size) {
+    var s = String(this);
+    while (s.length < (size || 2)) {s = "0" + s;}
+    return s;
+}
+
 contract('Card', accounts => {
     let card
     const  [ alice, bob, carlos ] = accounts;
@@ -30,11 +36,27 @@ contract('Card', accounts => {
         symbol.should.be.equal('CRD')
     })
 
-    it('Should return correct token uri', async () => {
-        const uid = 0
+    it('Should return correct token uri for multiple FT', async () => {
+        for (let i = 0; i< 100; i++) {
+            await card.mint(i, accounts[0], 2)
+            const cardUri = await card.tokenURI.call(i)
+            assert.equal(cardUri, `https://rinkeby.loom.games/erc721/zmb/${i.pad(6)}.json`)
+        }
+    })
+
+    it('Should return correct token uri for multiple NFT', async () => {
+        for (let i = 0; i< 100; i++) {
+            await card.mint(i, accounts[0])
+            const cardUri = await card.tokenURI.call(i)
+            assert.equal(cardUri, `https://rinkeby.loom.games/erc721/zmb/${i.pad(6)}.json`)
+        }
+    })
+
+    it('Should return correct token uri for 6-digit NFT', async () => {
+        const uid = 987145
         await card.mint(uid, accounts[0])
         const cardUri = await card.tokenURI.call(uid)
-        assert.equal(cardUri, "https://rinkeby.loom.games/erc721/zmb/000000.json")
+        assert.equal(cardUri, "https://rinkeby.loom.games/erc721/zmb/987145.json")
     })
 
     it('Should be able to mint a fungible token', async () => {
@@ -70,6 +92,46 @@ contract('Card', accounts => {
         await expectThrow(card.mint(uid, alice))
         const supplyPostSecondMint = await card.totalSupply()
         supplyPostMint.should.be.eq.BN(supplyPostSecondMint)
+    })
+
+    it('Should be impossible to mint NFT tokens with the same tokenId as an existing FT tokenId', async () => {
+        const uid = 0;
+        await card.mint(uid, alice, 5);
+        const supplyPostMint = await card.totalSupply()
+        await expectThrow(card.mint(uid, alice))
+        const supplyPostSecondMint = await card.totalSupply()
+        supplyPostMint.should.be.eq.BN(supplyPostSecondMint)
+    })
+
+    it('Should be impossible to mint FT tokens with the same tokenId as an existing NFT tokenId', async () => {
+        const uid = 0;
+        await card.mint(uid, alice);
+        const supplyPostMint = await card.totalSupply()
+        await expectThrow(card.mint(uid, alice, 5))
+        const supplyPostSecondMint = await card.totalSupply()
+        supplyPostMint.should.be.eq.BN(supplyPostSecondMint)
+    })
+
+    it('Should be impossible to mint NFT tokens more than once even when owner is the contract itself', async () => {
+        const uid = 0;
+        await card.mint(uid, card.address);
+        const supplyPostMint = await card.totalSupply()
+        await expectThrow(card.mint(uid, card.address, 3))
+        const supplyPostSecondMint = await card.totalSupply()
+        supplyPostMint.should.be.eq.BN(supplyPostSecondMint)
+    })
+
+    it('a FT token should not have an owner', async () => {
+        const uid = 0;
+        await card.mint(uid, alice, 10);
+        await expectThrow(card.ownerOf(uid));
+    })
+
+    it('Should be impossible for a FT token to be transferred with NFT transfer', async () => {
+        const uid = 0;
+        await card.mint(uid, alice, 10);
+        await expectThrow(card.transferFrom(alice, bob, uid));
+        await expectThrow(card.ownerOf(uid));
     })
 
     it('Should be able to transfer a non fungible token', async () => {
@@ -113,10 +175,10 @@ contract('Card', accounts => {
 
         const tx = await card.safeTransferFrom(alice, bob, uid, amount, "0xabcd", {from: alice})
 
-        assertEventVar(tx, 'TransferToken', 'from', alice)
-        assertEventVar(tx, 'TransferToken', 'to', bob)
-        assertEventVar(tx, 'TransferToken', 'tokenId', uid)
-        assertEventVar(tx, 'TransferToken', 'quantity', amount)
+        assertEventVar(tx, 'TransferWithQuantity', 'from', alice)
+        assertEventVar(tx, 'TransferWithQuantity', 'to', bob)
+        assertEventVar(tx, 'TransferWithQuantity', 'tokenId', uid)
+        assertEventVar(tx, 'TransferWithQuantity', 'quantity', amount)
 
         const aliceCardsAfter = await card.balanceOf(alice)
         assert.equal(aliceCardsAfter, 0)
@@ -136,10 +198,10 @@ contract('Card', accounts => {
 
         tx = await card.safeTransferFrom(alice, bob, uid, amount, "0xabcd", {from: bob})
 
-        assertEventVar(tx, 'TransferToken', 'from', alice)
-        assertEventVar(tx, 'TransferToken', 'to', bob)
-        assertEventVar(tx, 'TransferToken', 'tokenId', uid)
-        assertEventVar(tx, 'TransferToken', 'quantity', amount)
+        assertEventVar(tx, 'TransferWithQuantity', 'from', alice)
+        assertEventVar(tx, 'TransferWithQuantity', 'to', bob)
+        assertEventVar(tx, 'TransferWithQuantity', 'tokenId', uid)
+        assertEventVar(tx, 'TransferWithQuantity', 'quantity', amount)
     })
 
     it('Should Carlos not be authorized to spend', async () => {
@@ -157,6 +219,40 @@ contract('Card', accounts => {
     it('Should fail to mint quantity of coins larger than packed bin can represent', async () => {
         // each bin can only store numbers < 2^16
         await expectThrow(card.mint(alice, 0, 150000));
+    })
+
+    it('Should update balances of sender and receiver and ownerOf for NFTs', async () => {
+        //       bins :   -- 0 --  ---- 1 ----  ---- 2 ----  ---- 3 ----
+        let cards  = []; //[0,1,2,3, 16,17,18,19, 32,33,34,35, 48,49,50,51];
+        let copies = []; //[0,1,2,3, 12,13,14,15, 11,12,13,14, 11,12,13,14];
+
+        let nCards = 100;
+
+        //Minting enough copies for transfer for each cards
+        for (let i = 300; i < nCards + 300; i++){
+            await card.mint(i, alice);
+            cards.push(i);
+            copies.push(1);
+        }
+
+        const tx = await card.batchTransferFrom(alice, bob, cards, copies, {from: alice});
+
+        let balanceFrom;
+        let balanceTo;
+        let ownerOf;
+
+        for (let i = 0; i < cards.length; i++){
+            balanceFrom = await card.balanceOf(alice, cards[i]);
+            balanceTo   = await card.balanceOf(bob, cards[i]);
+            ownerOf = await card.ownerOf(cards[i]);
+
+            balanceFrom.should.be.eq.BN(0);
+            balanceTo.should.be.eq.BN(1);
+            assert.equal(ownerOf, bob);
+        }
+
+        assertEventVar(tx, 'BatchTransfer', 'from', alice)
+        assertEventVar(tx, 'BatchTransfer', 'to', bob)
     })
 
     it('Should update balances of sender and receiver', async () => {

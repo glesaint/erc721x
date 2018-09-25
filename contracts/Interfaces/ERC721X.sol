@@ -4,6 +4,7 @@ pragma solidity 0.4.24;
 contract ERC721X {
   function implementsERC721X() public pure returns (bool);
   function ownerOf(uint256 _tokenId) public view returns (address _owner);
+  function balanceOf(address owner) public view returns (uint256);
   function balanceOf(address owner, uint256 tokenId) public view returns (uint256);
   function tokensOwned(address owner) public view returns (uint256[], uint256[]);
 
@@ -22,7 +23,7 @@ contract ERC721X {
 
   // Required Events
   event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
-  event TransferToken(address indexed from, address indexed to, uint256 indexed tokenId, uint256 quantity);
+  event TransferWithQuantity(address indexed from, address indexed to, uint256 indexed tokenId, uint256 quantity);
   event ApprovalForAll(address indexed _owner, address indexed _operator, bool _approved);
-  event BatchTransfer(address from, address to, uint256[] tokenTypes, uint256[] amounts);
+  event BatchTransfer(address indexed from, address indexed to, uint256[] tokenTypes, uint256[] amounts);
 }
